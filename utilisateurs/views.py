@@ -2,15 +2,16 @@ from google.oauth2 import id_token
 from google.auth.transport import requests as google_requests
 
 import requests
+from drf_spectacular.utils import extend_schema
 from django.utils.crypto import get_random_string
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.permissions import AllowAny
-from django.contrib.auth import get_user_model
+from django.contrib.auth import authenticate, get_user_model
 from rest_framework_simplejwt.tokens import RefreshToken
-from utilisateurs.serializers import ClassicRegisterUserSerializer, GoogleAuthSerializer
+from utilisateurs.serializers import ClassicRegisterUserSerializer, GoogleAuthSerializer, LoginSerializer
 
 User = get_user_model()
 
@@ -25,6 +26,14 @@ class AuthViewSet(viewsets.ViewSet):
             'refresh': str(refresh),
             'access': str(refresh.access_token),
         }
+    @extend_schema(
+        request=ClassicRegisterUserSerializer,
+        responses={
+            201: {"message": "Compte créé avec succès !",
+                   "user": {"id": "int", "email": "string", "full_name  ": "string", "username": "string"},
+                   "tokens": {"refresh": "string", "access": "string"}},
+            400: {"error": "Détails de l'erreur de validation"}
+        })
     @action(detail=False, methods=['post'], url_path='register')
     def register(self, request):
         """Endpoint : /api/auth/register/"""
@@ -34,11 +43,19 @@ class AuthViewSet(viewsets.ViewSet):
             tokens = self.get_tokens_for_user(user)
             return Response({
                 "message": "Compte créé avec succès !",
-                "user": {"id": user.id, "email": user.email, "full_name": user.get_full_name()},
+                "user": {"id": user.id, "email": user.email, "full_name": user.get_full_name(), "username": user.username},
                 "tokens": tokens
             }, status=status.HTTP_201_CREATED)
         return Response(serialiser.errors, status=status.HTTP_400_BAD_REQUEST)
-
+    @extend_schema(
+        request=GoogleAuthSerializer,
+        responses={
+            200: {"message": "Connexion réussie via Google !",
+                   "user": {"id": "int", "email": "string", "full_name": "string", "username": "string", "is_teacher": "boolean"},
+                   "tokens": {"refresh": "string", "access": "string"}},
+            400: {"error": "Détails de l'erreur"}
+        }
+    )
     @action(detail=False, methods=['post'], url_path='google')
     def register_or_login_google(self, request):
         """Endpoint : /api/auth/google/"""
@@ -85,11 +102,58 @@ class AuthViewSet(viewsets.ViewSet):
                 "id": user.id,
                 "email": user.email,
                 "full_name": user.get_full_name(),
+                "username": user.username,
                 "is_teacher": user.is_teacher
             },
             "tokens": tokens
         }, status=status.HTTP_200_OK)
-
+    @extend_schema(
+        request=LoginSerializer,
+        responses={
+            200: {"message": "Connexion réussie !",
+                   "user": {"id": "int", "email": "string", "full_name": "string", "username": "string", "is_teacher": "boolean"},
+                   "tokens": {"refresh": "string", "access": "string"}},
+            400: {"error": "Détails de l'erreur"}
+        }
+    )
+    @action(detail=False, methods=['post'], url_path='login')
+    def login(self, request):
+        """Endpoint : /api/auth/login/"""
+        serializer = LoginSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        
+        login_id = serializer.validated_data['login_id']
+        password = serializer.validated_data['password']
+        
+        # C'est ici que la magie de notre backend personnalisé opère !
+        # Django va chercher 'login_id' dans le champ email ET dans le champ username.
+        user = authenticate(request, username=login_id, password=password)
+        
+        if user is not None:
+            if not user.is_active:
+                return Response({"error": "Ce compte est désactivé."}, status=status.HTTP_403_FORBIDDEN)
+                
+            # Génération des tokens JWT pour la session de l'utilisateur
+            tokens = self.get_tokens_for_user(user)
+            
+            return Response({
+                "message": "Connexion réussie !",
+                "user": {
+                    "id": user.id,
+                    "email": user.email,
+                    "full_name": user.get_full_name(),
+                    "username": user.username,
+                    "is_teacher": user.is_teacher  # Permet au frontend de savoir s'il faut afficher l'espace mentor
+                },
+                "tokens": tokens
+            }, status=status.HTTP_200_OK)
+            
+        # Sécurité : On reste vague sur l'erreur pour éviter de donner des indices aux hackers
+        return Response(
+            {"error": "Identifiants invalides. Veuillez réessayer."}, 
+            status=status.HTTP_401_UNAUTHORIZED
+        )
 
 
 

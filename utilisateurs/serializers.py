@@ -10,7 +10,7 @@ class ClassicRegisterUserSerializer(serializers.ModelSerializer):
     confirm_password = serializers.CharField(write_only=True, required=True)
     class Meta:
         model = User
-        fields = ['full_name', 'email', 'password', 'confirm_password', 'phone_number', 'is_teacher', 'is_premium_subscriber']
+        fields = ['full_name', 'username', 'email', 'password', 'confirm_password', 'phone_number', 'is_teacher', 'is_premium_subscriber']
 
     def validate_email(self, value):
         email_clean = value.lower().strip()
@@ -28,6 +28,7 @@ class ClassicRegisterUserSerializer(serializers.ModelSerializer):
         validated_data.pop('confirm_password', None)
         # utilisation de create_user pour hacher automatiquement le mot de passe en base de données
         full_name = validated_data.pop('full_name')
+        username = validated_data.get('username', None)
         password = validated_data.pop('password')
         email = validated_data['email']
 
@@ -36,7 +37,7 @@ class ClassicRegisterUserSerializer(serializers.ModelSerializer):
         last_name = name_parts[1] if len(name_parts) > 1 else ''
 
         user = User.objects.create(
-            username=email,
+            username=username if username else email,
             email=email,
             first_name=first_name,
             last_name=last_name
@@ -44,6 +45,17 @@ class ClassicRegisterUserSerializer(serializers.ModelSerializer):
         user.set_password(password)
         user.save()
         return user
+    
+class LoginSerializer(serializers.Serializer):
+    login_id = serializers.CharField(
+        required=True, 
+        help_text="Peut être l'adresse email ou le nom d'utilisateur."
+    )
+    password = serializers.CharField(
+        write_only=True, 
+        required=True,
+        style={'input_type': 'password'}
+    )
 class GoogleAuthSerializer(serializers.Serializer):
     """Reçoit le token Google envoyé par le frontend"""
     id_token = serializers.CharField(required=True)
